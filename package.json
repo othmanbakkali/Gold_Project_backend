@@ -1,7 +1,6 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
   "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -9,5 +8,21 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/othmanbakkali/Gold_Project_backend.git"
+  },
+  "bugs": {
+    "url": "https://github.com/othmanbakkali/Gold_Project_backend/issues"
+  },
+  "homepage": "https://github.com/othmanbakkali/Gold_Project_backend#readme",
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3",
+    "sqlite3": "^6.0.1"
+  }
 }
