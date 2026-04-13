@@ -4,21 +4,41 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
-app.use(cors());
 
-// ✅ route test (IMPORTANT)
+// ✅ middleware
+app.use(cors());
+app.use(express.json());
+
+// ✅ route test
 app.get("/", (req, res) => {
   res.send("Backend is running 🚀");
 });
 
-// ✅ API
+// ✅ variable globale
 let price = 100;
 
+// ✅ GET price
 app.get("/api/price", (req, res) => {
   res.json({ price });
 });
 
-// ✅ créer serveur HTTP
+// ✅ POST update price
+app.post("/api/price", (req, res) => {
+  const { newPrice } = req.body;
+
+  if (newPrice === undefined) {
+    return res.status(400).json({ error: "Missing price" });
+  }
+
+  price = newPrice;
+
+  // 🔥 update temps réel
+  io.emit("priceUpdate", { price });
+
+  res.json({ success: true, price });
+});
+
+// ✅ serveur HTTP
 const server = http.createServer(app);
 
 // ✅ Socket.IO
@@ -30,11 +50,10 @@ const io = new Server(server, {
 
 io.on("connection", (socket) => {
   console.log("Client connecté");
-
   socket.emit("priceUpdate", { price });
 });
 
-// ✅ simulation temps réel
+// ✅ simulation (optionnel)
 setInterval(() => {
   price = price + (Math.random() * 2 - 1);
 
@@ -43,31 +62,9 @@ setInterval(() => {
   });
 }, 5000);
 
-// ✅ PORT Render
-const PORT = process.env.PORT || 3001;
+// ✅ PORT
+const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
   console.log("Server running on port " + PORT);
-});
-
-app.use(express.json()); // IMPORTANT
-
-let price = 100;
-
-// GET (déjà existant)
-app.get("/api/price", (req, res) => {
-  res.json({ price });
-});
-
-// ✅ AJOUTER ÇA
-app.post("/api/price", (req, res) => {
-  const { newPrice } = req.body;
-
-  if (newPrice === undefined) {
-    return res.status(400).json({ error: "Missing price" });
-  }
-
-  price = newPrice;
-
-  res.json({ success: true, price });
 });
