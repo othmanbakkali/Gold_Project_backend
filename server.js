@@ -62,13 +62,7 @@ io.on("connection", (socket) => {
 });
 
 // ✅ simulation (optionnel)
-setInterval(() => {
-  price = price + (Math.random() * 2 - 1);
 
-  io.emit("priceUpdate", {
-    price: Number(price.toFixed(2))
-  });
-}, 5000);
 
 // ✅ PORT
 const PORT = process.env.PORT || 3000;
