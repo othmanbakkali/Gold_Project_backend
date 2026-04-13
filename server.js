@@ -43,7 +43,7 @@ app.post("/api/price", (req, res) => {
   date = new Date(); 
   io.emit("priceUpdate", { price, date });
 
-  res.json({ success: true, price });
+  //res.json({ success: true, price });
   res.json({
 	success: true,
 	price,
