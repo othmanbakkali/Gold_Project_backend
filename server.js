@@ -44,6 +44,11 @@ app.post("/api/price", (req, res) => {
   io.emit("priceUpdate", { price, date });
 
   res.json({ success: true, price });
+  res.json({
+	success: true,
+	price,
+	date
+  });
 });
 
 // ✅ serveur HTTP
