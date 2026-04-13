@@ -49,3 +49,25 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log("Server running on port " + PORT);
 });
+
+app.use(express.json()); // IMPORTANT
+
+let price = 100;
+
+// GET (déjà existant)
+app.get("/api/price", (req, res) => {
+  res.json({ price });
+});
+
+// ✅ AJOUTER ÇA
+app.post("/api/price", (req, res) => {
+  const { newPrice } = req.body;
+
+  if (newPrice === undefined) {
+    return res.status(400).json({ error: "Missing price" });
+  }
+
+  price = newPrice;
+
+  res.json({ success: true, price });
+});
