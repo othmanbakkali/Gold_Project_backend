@@ -16,34 +16,27 @@ app.get("/", (req, res) => {
 
 // ✅ variable globale
 let price = 100;
-
+let lastUpdated = new Date();
 // ✅ GET price
 app.get("/api/price", (req, res) => {
   res.json({ price });
 });
 
 // ✅ POST update price
+
 app.post("/api/price", (req, res) => {
-  console.log("BODY:", req.body);
-
-  // ✅ accepte les deux formats
   const newPrice = req.body.newPrice ?? req.body.price;
-
-  // 🔐 sécurité simple (optionnel)
-  const ADMIN_PASSWORD = "goldadmin"; // change ça !
-  if (req.body.password !== ADMIN_PASSWORD) {
-    return res.status(403).json({ error: "Unauthorized" });
-  }
 
   if (newPrice === undefined || isNaN(newPrice)) {
     return res.status(400).json({ error: "Invalid price" });
   }
 
   price = newPrice;
+  lastUpdated = new Date(); // ✅ mise à jour
 
-  io.emit("priceUpdate", { price });
+  io.emit("priceUpdate", { price, lastUpdated });
 
-  res.json({ success: true, price });
+  res.json({ success: true, price, lastUpdated });
 });
 
 // ✅ serveur HTTP
