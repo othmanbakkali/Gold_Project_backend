@@ -24,6 +24,8 @@ app.get("/api/price", (req, res) => {
 
 // ✅ POST update price
 app.post("/api/price", (req, res) => {
+  console.log("BODY:", req.body); // 👈 debug
+
   const { newPrice } = req.body;
 
   if (newPrice === undefined) {
@@ -31,8 +33,6 @@ app.post("/api/price", (req, res) => {
   }
 
   price = newPrice;
-
-  // 🔥 update temps réel
   io.emit("priceUpdate", { price });
 
   res.json({ success: true, price });
