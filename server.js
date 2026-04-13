@@ -32,7 +32,7 @@ app.post("/api/price", (req, res) => {
   }
 
   price = newPrice;
-  date = new Date(); // ✅ mise à jour
+  date = new Date(); // ✅ mise à jour 
 
   io.emit("priceUpdate", { price, date });
 
