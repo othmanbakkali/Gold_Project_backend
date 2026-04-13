@@ -16,7 +16,7 @@ app.get("/", (req, res) => {
 
 // ✅ variable globale
 let price = 100;
-let lastUpdated = new Date();
+let date = new Date();
 // ✅ GET price
 app.get("/api/price", (req, res) => {
   res.json({ price });
@@ -32,11 +32,11 @@ app.post("/api/price", (req, res) => {
   }
 
   price = newPrice;
-  lastUpdated = new Date(); // ✅ mise à jour
+  date = new Date(); // ✅ mise à jour
 
-  io.emit("priceUpdate", { price, lastUpdated });
+  io.emit("priceUpdate", { price, date });
 
-  res.json({ success: true, price, lastUpdated });
+  res.json({ success: true, price, date });
 });
 
 // ✅ serveur HTTP
