@@ -19,7 +19,7 @@ let price = 100;
 let date = new Date();
 // ✅ GET price
 app.get("/api/price", (req, res) => {
-  res.json({ price });
+  res.json({ price, date });
 });
 
 // ✅ POST update price
@@ -63,7 +63,7 @@ const io = new Server(server, {
 
 io.on("connection", (socket) => {
   console.log("Client connecté");
-  socket.emit("priceUpdate", { price });
+  socket.emit("priceUpdate", { price, date });
 });
 
 // ✅ simulation (optionnel)
