@@ -116,6 +116,13 @@ const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) =
 // Middlewares
 app.use(cors());
 app.use(express.json());
+// Middleware de redirection HTTPS (essentiel pour la PWA)
+app.use((req, res, next) => {
+  if (req.headers['x-forwarded-proto'] && req.headers['x-forwarded-proto'] !== 'https' && process.env.NODE_ENV === 'production') {
+    return res.redirect('https://' + req.headers.host + req.url);
+  }
+  next();
+});
 
 // Configuration des fichiers statiques (Frontend)
 const clientDistPath = path.resolve(__dirname, './public/dist');
@@ -366,7 +373,7 @@ app.post('/api/price', (req, res) => {
 
 // Route Fallback pour les applications React (SPA)
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, '../client/dist', 'index.html'));
+  res.sendFile(path.join(clientDistPath, 'index.html'));
 });
 
 // Lancement du serveur
