@@ -119,13 +119,28 @@ console.log('Serving static files from:', clientDistPath);
 
 app.use(express.static(clientDistPath));
 
-// Route pour télécharger l'APK directement
+// Routes pour le téléchargement des APK
 app.get('/PrixOr.apk', (req, res) => {
   const apkPath = path.resolve(__dirname, './public/PrixOr.apk');
   if (fs.existsSync(apkPath)) {
-    res.download(apkPath);
+    res.download(apkPath, 'PrixOr.apk');
   } else {
-    res.status(404).send('APK non trouvé sur le serveur');
+    // Essayer aussi le nom avec -Client
+    const clientPath = path.resolve(__dirname, './public/PrixOr-Client.apk');
+    if (fs.existsSync(clientPath)) {
+      res.download(clientPath, 'PrixOr.apk');
+    } else {
+      res.status(404).send('APK Client non trouvé');
+    }
+  }
+});
+
+app.get('/PrixOr-Admin.apk', (req, res) => {
+  const apkPath = path.resolve(__dirname, './public/PrixOr-Admin.apk');
+  if (fs.existsSync(apkPath)) {
+    res.download(apkPath, 'PrixOr-Admin.apk');
+  } else {
+    res.status(404).send('APK Admin non trouvé');
   }
 });
 
