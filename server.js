@@ -23,30 +23,34 @@ try {
     } catch (parseErr) {
       console.error('❌ Erreur lors du parsing de FIREBASE_SERVICE_ACCOUNT:', parseErr.message);
     }
-  } 
-  
-  // 2. Sinon, essayer de charger le fichier local (Développement)
-  if (!serviceAccount) {
-    try {
-      serviceAccount = require('./firebase-service-account.json');
-      console.log('🏠 Firebase: Chargement via fichier local.');
-    } catch (fileErr) {
-      // Le fichier n'existe pas ou erreur de lecture
-    }
   }
 
-  if (serviceAccount && serviceAccount.project_id && serviceAccount.project_id !== 'VOTRE_PROJECT_ID') {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-    firebaseAdmin = admin;
-    firebaseMessaging = admin.messaging();
-    console.log('✅ Firebase Admin SDK initialisé avec succès.');
-  } else {
-    console.warn('⚠️  Configuration Firebase manquante ou invalide. Notifications DÉSACTIVÉES.');
+  // Initialisation détaillée avec logs
+  try {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+      firebaseAdmin = admin;
+      firebaseMessaging = admin.messaging();
+      console.log('✅ Firebase Admin initialisé avec succès via variable d\'environnement.');
+    } else if (fs.existsSync(path.resolve(__dirname, './firebase-service-account.json'))) {
+      const serviceAccount = require('./firebase-service-account.json');
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+      firebaseAdmin = admin;
+      firebaseMessaging = admin.messaging();
+      console.log('✅ Firebase Admin initialisé avec succès via fichier local.');
+    } else {
+      console.warn('⚠️ Firebase: Aucune configuration trouvée (ni variable d\'env, ni fichier json). Notifications DÉSACTIVÉES.');
+    }
+  } catch (error) {
+    console.error('❌ Erreur critique lors de l\'initialisation de Firebase:', error.message);
   }
 } catch (e) {
-  console.warn('⚠️  Firebase Admin SDK non disponible:', e.message);
+  console.warn('⚠️ Firebase Admin SDK non disponible:', e.message);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -68,7 +72,7 @@ const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) =
     console.error('Erreur lors de la connexion à la base de données:', err.message);
   } else {
     console.log('Connecté à la base de données SQLite.');
-    
+
     // Création de la table gold_prices si elle n'existe pas
     db.run(`CREATE TABLE IF NOT EXISTS gold_prices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +87,7 @@ const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) =
         // Initialiser avec un prix par défaut si la table est vide
         db.get('SELECT COUNT(*) as count FROM gold_prices', (err, row) => {
           if (row.count === 0) {
-            db.run(`INSERT INTO gold_prices (price, currency, unit) VALUES (?, ?, ?)`, [650.00, 'MAD', 'g']);
+            db.run(`INSERT INTO gold_prices (price, currency, unit) VALUES (?, ?, ?)`, [1080.00, 'MAD', 'g']);
           }
         });
       }
@@ -146,9 +150,9 @@ app.get('/PrixOr-Admin.apk', (req, res) => {
 
 // Route de santé pour vérifier que le serveur est vivant
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'Server is running', 
+  res.json({
+    status: 'ok',
+    message: 'Server is running',
     dirname: __dirname,
     staticPath: clientDistPath,
     staticPathExists: fs.existsSync(clientDistPath),
@@ -224,7 +228,7 @@ async function sendPriceNotification(priceData) {
     if (err || !rows || rows.length === 0) return;
 
     const price = Math.floor(priceData.price);
-    
+
     // Group tokens by language
     const langGroups = rows.reduce((acc, row) => {
       const l = row.lang || 'ar';
@@ -242,7 +246,7 @@ async function sendPriceNotification(priceData) {
 
     for (const [lang, tokens] of Object.entries(langGroups)) {
       const t = translations[lang] || translations['ar'];
-      
+
       const message = {
         notification: {
           title: t.title,
@@ -326,7 +330,7 @@ app.get('/api/price/history', (req, res) => {
 // Mettre à jour le prix (Nécessite authentification)
 app.post('/api/price', (req, res) => {
   const { password, price, newPrice, currency = 'MAD', unit = 'g' } = req.body;
-  
+
   if (password !== ADMIN_PASSWORD) {
     return res.status(401).json({ error: 'Mot de passe incorrect' });
   }
@@ -337,11 +341,11 @@ app.post('/api/price', (req, res) => {
   }
 
   const currentDate = new Date().toISOString();
-  db.run(`INSERT INTO gold_prices (price, currency, unit, date) VALUES (?, ?, ?, ?)`, [finalPrice, currency, unit, currentDate], function(err) {
+  db.run(`INSERT INTO gold_prices (price, currency, unit, date) VALUES (?, ?, ?, ?)`, [finalPrice, currency, unit, currentDate], function (err) {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
-    
+
     const newRecord = {
       id: this.lastID,
       price: parseFloat(finalPrice),
@@ -355,7 +359,7 @@ app.post('/api/price', (req, res) => {
 
     // 2. Envoyer notification push FCM à tous les appareils Android enregistrés
     sendPriceNotification(newRecord);
-    
+
     res.json({ success: true, data: newRecord });
   });
 });
