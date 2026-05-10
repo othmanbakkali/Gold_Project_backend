@@ -134,9 +134,24 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     message: 'Server is running', 
+    dirname: __dirname,
     staticPath: clientDistPath,
-    apkExists: fs.existsSync(path.join(clientDistPath, 'PrixOr.apk'))
+    staticPathExists: fs.existsSync(clientDistPath),
+    apkExists: fs.existsSync(path.join(__dirname, './public/PrixOr.apk')),
+    filesInPublic: fs.existsSync(path.join(__dirname, './public')) ? fs.readdirSync(path.join(__dirname, './public')) : 'public folder not found'
   });
+});
+
+app.get('/', (req, res) => {
+  if (fs.existsSync(path.join(clientDistPath, 'index.html'))) {
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  } else {
+    res.send(`<h1>Serveur PrixOr actif</h1>
+              <p>Le dossier site web n'a pas été trouvé, mais le serveur fonctionne.</p>
+              <p><a href="/PrixOr.apk" style="padding: 10px 20px; background: gold; color: black; text-decoration: none; font-weight: bold; border-radius: 5px;">Télécharger l'APK directement ici</a></p>
+              <hr>
+              <p>Diagnostic: ${clientDistPath}</p>`);
+  }
 });
 
 // ── API: Enregistrer un token FCM ─────────────────────────────────────────────
