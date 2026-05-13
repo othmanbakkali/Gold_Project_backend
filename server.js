@@ -110,6 +110,26 @@ const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) =
       }
     });
     // ─────────────────────────────────────────────────────────────────────────
+
+    // ── Création de la table users ───────────────────────────────────────────
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1
+    )`, (err) => {
+      if (err) {
+        console.error('Erreur création table users:', err.message);
+      } else {
+        db.get('SELECT COUNT(*) as count FROM users', (err, row) => {
+          if (row && row.count === 0) {
+            db.run(`INSERT INTO users (username, password, is_active) VALUES (?, ?, ?)`, ['admin', ADMIN_PASSWORD, 1]);
+            console.log('Utilisateur admin par défaut créé.');
+          }
+        });
+      }
+    });
+    // ─────────────────────────────────────────────────────────────────────────
   }
 });
 
@@ -336,40 +356,109 @@ app.get('/api/price/history', (req, res) => {
 
 // Mettre à jour le prix (Nécessite authentification)
 app.post('/api/price', (req, res) => {
-  const { password, price, newPrice, currency = 'MAD', unit = 'g' } = req.body;
+  const { username, password, price, newPrice, currency = 'MAD', unit = 'g' } = req.body;
 
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Mot de passe incorrect' });
+  if (!username || !password) {
+    return res.status(401).json({ error: 'Nom d\\'utilisateur et mot de passe requis' });
   }
 
-  const finalPrice = price || newPrice;
-  if (!finalPrice || isNaN(finalPrice)) {
-    return res.status(400).json({ error: 'Prix invalide' });
-  }
-
-  const currentDate = new Date().toISOString();
-  db.run(`INSERT INTO gold_prices (price, currency, unit, date) VALUES (?, ?, ?, ?)`, [finalPrice, currency, unit, currentDate], function (err) {
+  db.get('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, user) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
+    if (!user) {
+      return res.status(401).json({ error: 'Identifiants incorrects' });
+    }
+    if (user.is_active !== 1) {
+      return res.status(403).json({ error: 'Ce compte utilisateur est désactivé' });
+    }
 
-    const newRecord = {
-      id: this.lastID,
-      price: parseFloat(finalPrice),
-      currency,
-      unit,
-      date: currentDate
-    };
+    const finalPrice = price || newPrice;
+    if (!finalPrice || isNaN(finalPrice)) {
+      return res.status(400).json({ error: 'Prix invalide' });
+    }
 
-    // 1. Émettre le nouveau prix à tous les clients connectés via WebSockets
-    io.emit('priceUpdate', newRecord);
+    const currentDate = new Date().toISOString();
+    db.run(`INSERT INTO gold_prices (price, currency, unit, date) VALUES (?, ?, ?, ?)`, [finalPrice, currency, unit, currentDate], function (err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
 
-    // 2. Envoyer notification push FCM à tous les appareils Android enregistrés
-    sendPriceNotification(newRecord);
+      const newRecord = {
+        id: this.lastID,
+        price: parseFloat(finalPrice),
+        currency,
+        unit,
+        date: currentDate
+      };
 
-    res.json({ success: true, data: newRecord });
+      // 1. Émettre le nouveau prix à tous les clients connectés via WebSockets
+      io.emit('priceUpdate', newRecord);
+
+      // 2. Envoyer notification push FCM à tous les appareils Android enregistrés
+      sendPriceNotification(newRecord);
+
+      res.json({ success: true, data: newRecord });
+    });
   });
 });
+
+// ── API: Gestion des utilisateurs ─────────────────────────────────────────────
+app.get('/api/users', (req, res) => {
+  const { username, password } = req.query;
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], (err, admin) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!admin) return res.status(401).json({ error: 'Non autorisé' });
+
+    db.all('SELECT id, username, is_active FROM users ORDER BY id ASC', (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  });
+});
+
+app.post('/api/users', (req, res) => {
+  const { adminUser, adminPass, newUsername, newPassword, isActive } = req.body;
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [adminUser, adminPass], (err, admin) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!admin) return res.status(401).json({ error: 'Non autorisé' });
+
+    if (!newUsername || !newPassword) return res.status(400).json({ error: 'Données manquantes' });
+
+    db.run('INSERT INTO users (username, password, is_active) VALUES (?, ?, ?)', [newUsername, newPassword, isActive ? 1 : 0], function(err) {
+      if (err) {
+        if (err.message.includes('UNIQUE constraint failed')) {
+          return res.status(400).json({ error: 'Ce nom d\\'utilisateur existe déjà' });
+        }
+        return res.status(500).json({ error: err.message });
+      }
+      res.json({ success: true, id: this.lastID });
+    });
+  });
+});
+
+app.put('/api/users/:id', (req, res) => {
+  const { adminUser, adminPass, password, isActive } = req.body;
+  const targetId = req.params.id;
+
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [adminUser, adminPass], (err, admin) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!admin) return res.status(401).json({ error: 'Non autorisé' });
+
+    if (password) {
+      db.run('UPDATE users SET password = ?, is_active = ? WHERE id = ?', [password, isActive ? 1 : 0, targetId], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+      });
+    } else {
+      db.run('UPDATE users SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, targetId], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+      });
+    }
+  });
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Route Fallback pour les applications React (SPA)
 app.use((req, res) => {
