@@ -359,7 +359,7 @@ app.post('/api/price', (req, res) => {
   const { username, password, price, newPrice, currency = 'MAD', unit = 'g' } = req.body;
 
   if (!username || !password) {
-    return res.status(401).json({ error: 'Nom d\\'utilisateur et mot de passe requis' });
+    return res.status(401).json({ error: "Nom d'utilisateur et mot de passe requis" });
   }
 
   db.get('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, user) => {
@@ -428,7 +428,7 @@ app.post('/api/users', (req, res) => {
     db.run('INSERT INTO users (username, password, is_active) VALUES (?, ?, ?)', [newUsername, newPassword, isActive ? 1 : 0], function(err) {
       if (err) {
         if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(400).json({ error: 'Ce nom d\\'utilisateur existe déjà' });
+          return res.status(400).json({ error: "Ce nom d'utilisateur existe déjà" });
         }
         return res.status(500).json({ error: err.message });
       }
