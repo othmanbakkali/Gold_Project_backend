@@ -134,6 +134,24 @@ const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) =
     });
     // ─────────────────────────────────────────────────────────────────────────
 
+    // ── Création de la table settings ─────────────────────────────────────────
+    db.run(`CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )`, (err) => {
+      if (err) {
+        console.error('Erreur création table settings:', err.message);
+      } else {
+        // Initialiser le message de pied de page si vide
+        db.get("SELECT value FROM settings WHERE key = 'footer_message'", (err, row) => {
+          if (!row) {
+            db.run("INSERT INTO settings (key, value) VALUES ('footer_message', '')");
+          }
+        });
+      }
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
     // ── Création de la table users ───────────────────────────────────────────
     db.run(`CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -476,6 +494,33 @@ app.post('/api/price', (req, res) => {
 });
 
 // ── API: Gestion des utilisateurs ─────────────────────────────────────────────
+// ── API: Paramètres (Message de pied de page) ───────────────────────────────
+app.get('/api/settings/footer', (req, res) => {
+  db.get("SELECT value FROM settings WHERE key = 'footer_message'", (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: row ? row.value : '' });
+  });
+});
+
+app.post('/api/settings/footer', (req, res) => {
+  const { username, password, message } = req.body;
+  
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(401).json({ error: 'Non autorisé' });
+
+    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('footer_message', ?)", [message], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // Émettre le changement via WebSockets
+      io.emit('settingsUpdate', { key: 'footer_message', value: message });
+      
+      res.json({ success: true });
+    });
+  });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.get('/api/users', (req, res) => {
   const { username, password } = req.query;
   db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], (err, admin) => {
