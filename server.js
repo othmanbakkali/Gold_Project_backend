@@ -139,15 +139,19 @@ const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) =
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      is_active INTEGER DEFAULT 1
+      is_active INTEGER DEFAULT 1,
+      is_superuser INTEGER DEFAULT 0
     )`, (err) => {
       if (err) {
         console.error('Erreur création table users:', err.message);
       } else {
+        // Migration: ajouter is_superuser si n'existe pas
+        db.run(`ALTER TABLE users ADD COLUMN is_superuser INTEGER DEFAULT 0`, () => {});
+
         db.get('SELECT COUNT(*) as count FROM users', (err, row) => {
           if (row && row.count === 0) {
-            db.run(`INSERT INTO users (username, password, is_active) VALUES (?, ?, ?)`, ['admin', ADMIN_PASSWORD, 1]);
-            console.log('Utilisateur admin par défaut créé.');
+            db.run(`INSERT INTO users (username, password, is_active, is_superuser) VALUES (?, ?, ?, ?)`, ['admin', ADMIN_PASSWORD, 1, 1]);
+            console.log('Utilisateur admin par défaut (superuser) créé.');
           }
         });
       }
@@ -478,7 +482,7 @@ app.get('/api/users', (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!admin) return res.status(401).json({ error: 'Non autorisé' });
 
-    db.all('SELECT id, username, is_active FROM users ORDER BY id ASC', (err, rows) => {
+    db.all('SELECT id, username, is_active, is_superuser FROM users ORDER BY id ASC', (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(rows);
     });
@@ -493,7 +497,9 @@ app.post('/api/users', (req, res) => {
 
     if (!newUsername || !newPassword) return res.status(400).json({ error: 'Données manquantes' });
 
-    db.run('INSERT INTO users (username, password, is_active) VALUES (?, ?, ?)', [newUsername, newPassword, isActive ? 1 : 0], function(err) {
+    const isNewSuper = req.body.isSuperUser ? 1 : 0;
+
+    db.run('INSERT INTO users (username, password, is_active, is_superuser) VALUES (?, ?, ?, ?)', [newUsername, newPassword, isActive ? 1 : 0, isNewSuper], function(err) {
       if (err) {
         if (err.message.includes('UNIQUE constraint failed')) {
           return res.status(400).json({ error: "Ce nom d'utilisateur existe déjà" });
@@ -509,34 +515,51 @@ app.put('/api/users/:id', (req, res) => {
   const { adminUser, adminPass, username, password, isActive } = req.body;
   const targetId = req.params.id;
 
-  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [adminUser, adminPass], (err, admin) => {
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [adminUser, adminPass], (err, requester) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (!admin) return res.status(401).json({ error: 'Non autorisé' });
+    if (!requester) return res.status(401).json({ error: 'Non autorisé' });
 
-    // Construire la requête de mise à jour dynamiquement
-    let query = 'UPDATE users SET is_active = ?';
-    let params = [isActive ? 1 : 0];
+    // Vérifier si la cible est un superuser
+    db.get('SELECT is_superuser FROM users WHERE id = ?', [targetId], (err, target) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!target) return res.status(404).json({ error: 'Utilisateur non trouvé' });
 
-    if (username) {
-      query += ', username = ?';
-      params.push(username);
-    }
-    if (password) {
-      query += ', password = ?';
-      params.push(password);
-    }
-
-    query += ' WHERE id = ?';
-    params.push(targetId);
-
-    db.run(query, params, function(err) {
-      if (err) {
-        if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(400).json({ error: "Ce nom d'utilisateur est déjà utilisé" });
-        }
-        return res.status(500).json({ error: err.message });
+      // Règle de sécurité : Seul un superuser peut modifier un autre superuser (incluant son mot de passe)
+      if (target.is_superuser === 1 && requester.is_superuser !== 1) {
+        return res.status(403).json({ error: 'Seul un Super Utilisateur peut modifier un compte administrateur principal.' });
       }
-      res.json({ success: true });
+
+      // Construire la requête de mise à jour dynamiquement
+      let query = 'UPDATE users SET is_active = ?';
+      let params = [isActive !== undefined ? (isActive ? 1 : 0) : target.is_active];
+
+      if (username) {
+        query += ', username = ?';
+        params.push(username);
+      }
+      if (password) {
+        query += ', password = ?';
+        params.push(password);
+      }
+      
+      // Permettre de changer le rang superuser seulement si le demandeur est superuser
+      if (req.body.isSuperUser !== undefined && requester.is_superuser === 1) {
+        query += ', is_superuser = ?';
+        params.push(req.body.isSuperUser ? 1 : 0);
+      }
+
+      query += ' WHERE id = ?';
+      params.push(targetId);
+
+      db.run(query, params, function(err) {
+        if (err) {
+          if (err.message.includes('UNIQUE constraint failed')) {
+            return res.status(400).json({ error: "Ce nom d'utilisateur est déjà utilisé" });
+          }
+          return res.status(500).json({ error: err.message });
+        }
+        res.json({ success: true });
+      });
     });
   });
 });
