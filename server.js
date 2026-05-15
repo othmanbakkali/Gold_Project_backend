@@ -74,6 +74,9 @@ io.on('connection', (socket) => {
     connectedAt: new Date().toISOString()
   });
 
+  // Enregistrer dans l'historique
+  db.run('INSERT INTO connection_history (ip_address) VALUES (?)', [ip]);
+
   socket.on('disconnect', () => {
     activeConnections.delete(socket.id);
   });
@@ -84,7 +87,15 @@ const PORT = process.env.PORT || 3001;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'goldadmin';
 
 // Configuration de la base de données SQLite
-const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) => {
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'database.sqlite');
+
+// S'assurer que le dossier parent existe (utile pour les volumes Railway)
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Erreur lors de la connexion à la base de données:', err.message);
   } else {
@@ -174,6 +185,13 @@ const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) =
         });
       }
     });
+
+    // ── Création de la table connection_history ──────────────────────────────
+    db.run(`CREATE TABLE IF NOT EXISTS connection_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip_address TEXT,
+      connected_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
     // ─────────────────────────────────────────────────────────────────────────
   }
 });
@@ -608,7 +626,60 @@ app.put('/api/users/:id', (req, res) => {
     });
   });
 });
+
+// ── API: Connection Stats (Graphs) ──────────────────────────────────────────
+app.get('/api/dashboard/connection-stats', (req, res) => {
+  const { username, password } = req.query;
+  
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], (err, admin) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!admin) return res.status(401).json({ error: 'Non autorisé' });
+
+    const runQuery = (sql) => new Promise((resolve, reject) => {
+      db.all(sql, [], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+
+    const hourlySql = `
+      SELECT strftime('%H:00', connected_at) as label, COUNT(*) as count 
+      FROM connection_history 
+      WHERE connected_at >= datetime('now', '-24 hours')
+      GROUP BY label ORDER BY label ASC`;
+    
+    const dailySql = `
+      SELECT strftime('%Y-%m-%d', connected_at) as label, COUNT(*) as count 
+      FROM connection_history 
+      WHERE connected_at >= datetime('now', '-30 days')
+      GROUP BY label ORDER BY label ASC`;
+
+    const weeklySql = `
+      SELECT strftime('%Y-W%W', connected_at) as label, COUNT(*) as count 
+      FROM connection_history 
+      WHERE connected_at >= datetime('now', '-12 weeks')
+      GROUP BY label ORDER BY label ASC`;
+
+    const monthlySql = `
+      SELECT strftime('%Y-%m', connected_at) as label, COUNT(*) as count 
+      FROM connection_history 
+      WHERE connected_at >= datetime('now', '-12 months')
+      GROUP BY label ORDER BY label ASC`;
+
+    Promise.all([
+      runQuery(hourlySql),
+      runQuery(dailySql),
+      runQuery(weeklySql),
+      runQuery(monthlySql)
+    ]).then(([hourly, daily, weekly, monthly]) => {
+      res.json({ hourly, daily, weekly, monthly });
+    }).catch(err => {
+      res.status(500).json({ error: err.message });
+    });
+  });
+});
 // ─────────────────────────────────────────────────────────────────────────────
+
 
 // Route Fallback pour les applications React (SPA)
 app.use((req, res) => {
