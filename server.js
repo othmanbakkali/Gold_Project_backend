@@ -68,9 +68,12 @@ const activeConnections = new Map();
 
 io.on('connection', (socket) => {
   const ip = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
+  const platform = socket.handshake.query.platform || 'android';
+  
   activeConnections.set(socket.id, {
     id: socket.id,
     ip: ip,
+    platform: platform,
     connectedAt: new Date().toISOString()
   });
 
@@ -441,14 +444,20 @@ app.get('/api/dashboard/stats', (req, res) => {
       db.all('SELECT id, price, date, ip_address, username FROM gold_prices ORDER BY id DESC LIMIT 50', (err, priceRows) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        res.json({
-          activeConnections: Array.from(activeConnections.values()),
-          installations: {
-            android: androidCount,
-            ios: iosCount,
-            total: androidCount + iosCount
-          },
-          priceHistory: priceRows
+        // 3. Get Recent Connection History
+        db.all('SELECT id, ip_address, connected_at FROM connection_history ORDER BY id DESC LIMIT 100', (err, connHistoryRows) => {
+          if (err) return res.status(500).json({ error: err.message });
+
+          res.json({
+            activeConnections: Array.from(activeConnections.values()),
+            connectionHistory: connHistoryRows,
+            installations: {
+              android: androidCount,
+              ios: iosCount,
+              total: androidCount + iosCount
+            },
+            priceHistory: priceRows
+          });
         });
       });
     });
