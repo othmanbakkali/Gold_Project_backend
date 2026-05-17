@@ -279,8 +279,8 @@ app.post('/api/fcm/register', (req, res) => {
   db.run(
     `INSERT INTO fcm_tokens (token, device_id, platform, lang, created_at, last_seen)
      VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(token) DO UPDATE SET last_seen = ?, device_id = ?, lang = ?`,
-    [token, deviceId || null, platform, lang, now, now, now, deviceId || null, lang],
+     ON CONFLICT(token) DO UPDATE SET last_seen = ?, device_id = ?, lang = ?, platform = ?`,
+    [token, deviceId || null, platform, lang, now, now, now, deviceId || null, lang, platform],
     function (err) {
       if (err) {
         console.error('Erreur enregistrement token FCM:', err.message);
@@ -437,7 +437,7 @@ app.get('/api/dashboard/stats', (req, res) => {
       let iosCount = 0;
       
       platformRows.forEach(row => {
-        if (row.platform.toLowerCase() === 'ios') iosCount = row.count;
+        if (row.platform && row.platform.toLowerCase() === 'ios') iosCount = row.count;
         else androidCount += row.count; // Default to android
       });
 
