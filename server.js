@@ -70,6 +70,8 @@ io.on('connection', (socket) => {
   const ip = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
   const platform = socket.handshake.query.platform || 'android';
   
+  console.log(`🔌 Client connecté: ID=${socket.id}, IP=${ip}, Platform=${platform}`);
+
   activeConnections.set(socket.id, {
     id: socket.id,
     ip: ip,
@@ -78,9 +80,16 @@ io.on('connection', (socket) => {
   });
 
   // Enregistrer dans l'historique
-  db.run('INSERT INTO connection_history (ip_address) VALUES (?)', [ip]);
+  db.run('INSERT INTO connection_history (ip_address) VALUES (?)', [ip], (err) => {
+    if (err) {
+      console.error(`❌ Erreur enregistrement historique connexion pour ${ip}:`, err.message);
+    } else {
+      console.log(`💾 Connexion de ${ip} enregistrée dans l'historique.`);
+    }
+  });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
+    console.log(`🔌 Client déconnecté: ID=${socket.id}, Raison=${reason}`);
     activeConnections.delete(socket.id);
   });
 });
@@ -300,8 +309,10 @@ app.post('/api/fcm/unregister', (req, res) => {
   }
   db.run('DELETE FROM fcm_tokens WHERE token = ?', [token], function (err) {
     if (err) {
+      console.error(`❌ Erreur lors de la désinscription du token FCM:`, err.message);
       return res.status(500).json({ error: err.message });
     }
+    console.log(`🗑️ Token FCM désinscrit: ${token.slice(0, 20)}... (lignes affectées: ${this.changes})`);
     res.json({ success: true });
   });
 });
@@ -509,6 +520,8 @@ app.post('/api/price', (req, res) => {
         ip_address: ipAddress,
         username: user.username
       };
+
+      console.log(`💰 Nouveau prix de l'or enregistré par ${user.username} : ${finalPrice} ${currency}/${unit} (${ipAddress})`);
 
       // 1. Émettre le nouveau prix à tous les clients connectés via WebSockets
       io.emit('priceUpdate', newRecord);
