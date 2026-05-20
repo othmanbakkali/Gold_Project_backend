@@ -107,10 +107,14 @@ if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
+let dbConnected = false;
+
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Erreur lors de la connexion à la base de données:', err.message);
+    dbConnected = false;
   } else {
+    dbConnected = true;
     console.log(`Base de données connectée : ${dbPath}`);
     console.log('Connecté à la base de données SQLite (Persistance Activée).');
 
@@ -216,6 +220,91 @@ app.use(express.json());
 app.use((req, res, next) => {
   if (req.headers['x-forwarded-proto'] && req.headers['x-forwarded-proto'] !== 'https' && process.env.NODE_ENV === 'production') {
     return res.redirect('https://' + req.headers.host + req.url);
+  }
+  next();
+});
+
+// Middleware de vérification de la connexion à la base de données
+app.use((req, res, next) => {
+  if (req.path === '/health') {
+    return next();
+  }
+
+  if (!dbConnected) {
+    res.status(503);
+    if (req.path.startsWith('/api/')) {
+      return res.json({ error: 'Le site est en maintenance. Veuillez contacter votre administrateur.' });
+    }
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Maintenance / صيانة</title>
+        <style>
+          body {
+            background: #0f0f12;
+            color: #fff;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            text-align: center;
+          }
+          .container {
+            max-width: 550px;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(251, 191, 36, 0.2);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(12px);
+            margin: 20px;
+          }
+          h1 {
+            background: linear-gradient(135deg, #fbbf24, #d97706);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 2.2rem;
+            margin-bottom: 20px;
+            font-weight: 700;
+          }
+          p {
+            color: #cbd5e1;
+            font-size: 1.2rem;
+            line-height: 1.7;
+            margin: 15px 0;
+          }
+          .icon {
+            font-size: 4.5rem;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite ease-in-out;
+          }
+          .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(251, 191, 36, 0.3), transparent);
+            margin: 25px 0;
+          }
+          @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="icon">🥇</div>
+          <h1>Site en Maintenance</h1>
+          <p dir="rtl" style="font-size: 1.4rem; font-weight: 500;">الموقع في فترة صيانة. يرجى الاتصال بالمسؤول عن النظام.</p>
+          <div class="divider"></div>
+          <p>Le site est en maintenance. Veuillez contacter votre administrateur.</p>
+        </div>
+      </body>
+      </html>
+    `);
   }
   next();
 });
