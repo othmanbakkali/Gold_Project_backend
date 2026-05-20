@@ -60,7 +60,8 @@ const io = socketIo(server, {
   cors: {
     origin: "*", // En production, restreindre aux domaines autorisés
     methods: ["GET", "POST"]
-  }
+  },
+  transports: ["websocket", "polling"]
 });
 
 // ─── Active Connections Tracking ─────────────────────────────────────────────
