@@ -740,6 +740,29 @@ app.put('/api/users/:id', (req, res) => {
   });
 });
 
+function getCasablancaOffsetHours() {
+  const date = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Casablanca',
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: 'numeric', second: 'numeric',
+    hour12: false
+  });
+  const parts = formatter.formatToParts(date);
+  const getVal = (type) => parseInt(parts.find(p => p.type === type).value, 10);
+  const year = getVal('year');
+  const month = getVal('month') - 1;
+  const day = getVal('day');
+  let hour = getVal('hour');
+  if (hour === 24) hour = 0;
+  const minute = getVal('minute');
+  const second = getVal('second');
+  const casaUtcTime = Date.UTC(year, month, day, hour, minute, second);
+  const actualUtcTime = date.getTime();
+  const diffMs = casaUtcTime - actualUtcTime;
+  return Math.round(diffMs / (1000 * 60 * 60));
+}
+
 // ── API: Connection Stats (Graphs) ──────────────────────────────────────────
 app.get('/api/dashboard/connection-stats', (req, res) => {
   const { username, password } = req.query;
@@ -747,6 +770,11 @@ app.get('/api/dashboard/connection-stats', (req, res) => {
   db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], (err, admin) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!admin) return res.status(401).json({ error: 'Non autorisé' });
+
+    const offset = getCasablancaOffsetHours();
+    const offsetSign = offset >= 0 ? '+' : '-';
+    const offsetStr = `${offsetSign}${Math.abs(offset)} hours`;
+    const negOffsetStr = `${offset >= 0 ? '-' : '+'}${Math.abs(offset)} hours`;
 
     const runQuery = (sql) => new Promise((resolve, reject) => {
       db.all(sql, [], (err, rows) => {
@@ -756,27 +784,27 @@ app.get('/api/dashboard/connection-stats', (req, res) => {
     });
 
     const hourlySql = `
-      SELECT strftime('%H:00', connected_at) as label, COUNT(*) as count 
+      SELECT strftime('%H:00', datetime(connected_at, '${offsetStr}')) as label, COUNT(*) as count 
       FROM connection_history 
-      WHERE connected_at >= datetime('now', '-24 hours')
+      WHERE connected_at >= datetime('now', '${offsetStr}', 'start of day', '${negOffsetStr}')
       GROUP BY label ORDER BY label ASC`;
     
     const dailySql = `
-      SELECT strftime('%Y-%m-%d', connected_at) as label, COUNT(*) as count 
+      SELECT strftime('%Y-%m-%d', datetime(connected_at, '${offsetStr}')) as label, COUNT(*) as count 
       FROM connection_history 
-      WHERE connected_at >= datetime('now', '-30 days')
+      WHERE connected_at >= datetime('now', '${offsetStr}', '-30 days', 'start of day', '${negOffsetStr}')
       GROUP BY label ORDER BY label ASC`;
 
     const weeklySql = `
-      SELECT strftime('%Y-W%W', connected_at) as label, COUNT(*) as count 
+      SELECT strftime('%Y-W%W', datetime(connected_at, '${offsetStr}')) as label, COUNT(*) as count 
       FROM connection_history 
-      WHERE connected_at >= datetime('now', '-12 weeks')
+      WHERE connected_at >= datetime('now', '${offsetStr}', '-84 days', 'start of day', '${negOffsetStr}')
       GROUP BY label ORDER BY label ASC`;
 
     const monthlySql = `
-      SELECT strftime('%Y-%m', connected_at) as label, COUNT(*) as count 
+      SELECT strftime('%Y-%m', datetime(connected_at, '${offsetStr}')) as label, COUNT(*) as count 
       FROM connection_history 
-      WHERE connected_at >= datetime('now', '-12 months')
+      WHERE connected_at >= datetime('now', '${offsetStr}', '-12 months', 'start of day', '${negOffsetStr}')
       GROUP BY label ORDER BY label ASC`;
 
     Promise.all([
@@ -784,7 +812,29 @@ app.get('/api/dashboard/connection-stats', (req, res) => {
       runQuery(dailySql),
       runQuery(weeklySql),
       runQuery(monthlySql)
-    ]).then(([hourly, daily, weekly, monthly]) => {
+    ]).then(([hourlyRows, daily, weekly, monthly]) => {
+      // Pre-populate hourly stats from 00:00 up to current Casablanca hour
+      let currentHour = parseInt(new Intl.DateTimeFormat('en-US', { 
+        timeZone: 'Africa/Casablanca', 
+        hour: 'numeric', 
+        hour12: false 
+      }).format(new Date()), 10);
+      if (currentHour === 24) currentHour = 0;
+
+      const hourlyDataMap = new Map();
+      for (let h = 0; h <= currentHour; h++) {
+        const hourStr = String(h).padStart(2, '0') + ':00';
+        hourlyDataMap.set(hourStr, 0);
+      }
+
+      hourlyRows.forEach(row => {
+        if (hourlyDataMap.has(row.label)) {
+          hourlyDataMap.set(row.label, row.count);
+        }
+      });
+
+      const hourly = Array.from(hourlyDataMap.entries()).map(([label, count]) => ({ label, count }));
+
       res.json({ hourly, daily, weekly, monthly });
     }).catch(err => {
       res.status(500).json({ error: err.message });
