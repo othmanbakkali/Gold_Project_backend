@@ -624,6 +624,176 @@ app.post('/api/price', (req, res) => {
   });
 });
 
+// ── API: Sauvegarde locale de la base de données ─────────────────────────────
+app.post('/api/backup', (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(401).json({ error: "Nom d'utilisateur et mot de passe requis" });
+  }
+
+  db.get('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!user || user.is_active !== 1) {
+      return res.status(401).json({ error: 'Identifiants incorrects ou compte désactivé' });
+    }
+
+    const targetBackupPath = '/app/data/database.sqlite';
+    const targetBackupDir = path.dirname(targetBackupPath);
+
+    try {
+      if (!fs.existsSync(targetBackupDir)) {
+        fs.mkdirSync(targetBackupDir, { recursive: true });
+      }
+
+      const resolvedDbPath = path.resolve(dbPath);
+      const resolvedBackupPath = path.resolve(targetBackupPath);
+
+      let actualBackupPath = resolvedBackupPath;
+      if (resolvedDbPath === resolvedBackupPath) {
+        actualBackupPath = resolvedBackupPath + '.bak';
+      }
+
+      fs.copyFileSync(resolvedDbPath, actualBackupPath);
+      console.log(`💾 Base de données sauvegardée avec succès sous ${actualBackupPath}`);
+
+      res.json({ 
+        success: true, 
+        message: `Base de données sauvegardée avec succès sous ${actualBackupPath.replace(/\\/g, '/')}`,
+        path: actualBackupPath 
+      });
+    } catch (copyErr) {
+      console.error('Erreur lors de la sauvegarde de la base de données:', copyErr.message);
+      res.status(500).json({ error: `Erreur lors de la sauvegarde: ${copyErr.message}` });
+    }
+  });
+});
+
+// ── API: Télécharger la base de données active ────────────────────────────────
+app.get('/api/backup/download', (req, res) => {
+  const { username, password } = req.query;
+
+  if (!username || !password) {
+    return res.status(401).json({ error: "Nom d'utilisateur et mot de passe requis" });
+  }
+
+  db.get('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!user || user.is_active !== 1) {
+      return res.status(401).json({ error: 'Identifiants incorrects ou compte désactivé' });
+    }
+
+    const resolvedDbPath = path.resolve(dbPath);
+    if (!fs.existsSync(resolvedDbPath)) {
+      return res.status(404).json({ error: "Fichier de base de données introuvable" });
+    }
+
+    res.download(resolvedDbPath, 'database.sqlite', (err) => {
+      if (err) {
+        console.error('Erreur lors du téléchargement du fichier de base de données:', err.message);
+        if (!res.headersSent) {
+          res.status(500).json({ error: `Erreur lors du téléchargement: ${err.message}` });
+        }
+      }
+    });
+  });
+});
+
+// ── API: Modifier un prix existant ───────────────────────────────────────────
+app.put('/api/price/:id', (req, res) => {
+  const { username, password, price } = req.body;
+  const targetId = req.params.id;
+
+  if (!username || !password) {
+    return res.status(401).json({ error: "Nom d'utilisateur et mot de passe requis" });
+  }
+
+  db.get('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!user || user.is_active !== 1) {
+      return res.status(401).json({ error: 'Identifiants incorrects ou compte désactivé' });
+    }
+
+    if (price === undefined || isNaN(price)) {
+      return res.status(400).json({ error: 'Prix invalide' });
+    }
+
+    db.run('UPDATE gold_prices SET price = ? WHERE id = ?', [price, targetId], function (err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Prix non trouvé' });
+      }
+
+      console.log(`✏️ Prix ID ${targetId} modifié par ${user.username} : nouveau prix = ${price}`);
+
+      // Vérifier si c'est le dernier prix inséré (actuel) pour notifier les clients
+      db.get('SELECT * FROM gold_prices ORDER BY id DESC LIMIT 1', (err, latestPrice) => {
+        if (!err && latestPrice && latestPrice.id === parseInt(targetId, 10)) {
+          io.emit('priceUpdate', latestPrice);
+        }
+      });
+
+      res.json({ success: true, message: 'Prix modifié avec succès' });
+    });
+  });
+});
+
+// ── API: Supprimer un prix existant ──────────────────────────────────────────
+app.delete('/api/price/:id', (req, res) => {
+  const { username, password } = req.body;
+  const targetId = req.params.id;
+
+  if (!username || !password) {
+    return res.status(401).json({ error: "Nom d'utilisateur et mot de passe requis" });
+  }
+
+  db.get('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!user || user.is_active !== 1) {
+      return res.status(401).json({ error: 'Identifiants incorrects ou compte désactivé' });
+    }
+
+    // Récupérer le dernier prix avant suppression pour vérifier si on supprime le prix actuel
+    db.get('SELECT id FROM gold_prices ORDER BY id DESC LIMIT 1', (err, latestBeforeDelete) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      db.run('DELETE FROM gold_prices WHERE id = ?', [targetId], function (err) {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+          return res.status(404).json({ error: 'Prix non trouvé' });
+        }
+
+        console.log(`🗑️ Prix ID ${targetId} supprimé par ${user.username}`);
+
+        // Si le prix supprimé était le plus récent, on émet le nouveau prix actuel
+        if (latestBeforeDelete && latestBeforeDelete.id === parseInt(targetId, 10)) {
+          db.get('SELECT * FROM gold_prices ORDER BY id DESC LIMIT 1', (err, newLatest) => {
+            if (!err) {
+              io.emit('priceUpdate', newLatest || { price: 0, currency: 'MAD', unit: 'g' });
+            }
+          });
+        }
+
+        res.json({ success: true, message: 'Prix supprimé avec succès' });
+      });
+    });
+  });
+});
+
 // ── API: Gestion des utilisateurs ─────────────────────────────────────────────
 // ── API: Paramètres (Message de pied de page) ───────────────────────────────
 app.get('/api/settings/footer', (req, res) => {
@@ -651,6 +821,20 @@ app.post('/api/settings/footer', (req, res) => {
   });
 });
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── API: Liste des prix pour administration (avec ID) ───────────────────────
+app.get('/api/admin/prices', (req, res) => {
+  const { username, password } = req.query;
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], (err, admin) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!admin) return res.status(401).json({ error: 'Non autorisé' });
+
+    db.all('SELECT id, price, currency, unit, date, ip_address, username FROM gold_prices ORDER BY id DESC LIMIT 500', (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+  });
+});
 
 app.get('/api/users', (req, res) => {
   const { username, password } = req.query;
