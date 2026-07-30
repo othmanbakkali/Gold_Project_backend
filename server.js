@@ -506,9 +506,26 @@ app.get('/api/price', (req, res) => {
 
 // Obtenir l'historique des prix
 app.get('/api/price/history', (req, res) => {
-  const { period = 'week' } = req.query;
-  let days = 7;
-  if (period === 'month') days = 30;
+  const { period = 'year', startDate, endDate } = req.query;
+
+  if (startDate && endDate) {
+    const startIso = new Date(startDate + 'T00:00:00.000Z').toISOString();
+    const endIso = new Date(endDate + 'T23:59:59.999Z').toISOString();
+
+    db.all('SELECT price, date, ip_address, username FROM gold_prices WHERE date >= ? AND date <= ? ORDER BY date ASC', [startIso, endIso], (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    });
+    return;
+  }
+
+  let days = 365;
+  if (period === '3days') days = 3;
+  else if (period === 'week') days = 7;
+  else if (period === 'month') days = 30;
+  else if (period === '3months') days = 90;
+  else if (period === 'year' || period === '1year') days = 365;
+  else if (period === 'all') days = 3650;
 
   const dateLimit = new Date();
   dateLimit.setDate(dateLimit.getDate() - days);
