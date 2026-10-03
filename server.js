@@ -177,6 +177,27 @@ const db = new sqlite3.Database(dbPath, (err) => {
             db.run("INSERT INTO settings (key, value) VALUES ('footer_message', '')");
           }
         });
+
+        // Initialiser la configuration de mise à jour mobile si vide
+        db.get("SELECT value FROM settings WHERE key = 'app_version_config'", (err, row) => {
+          if (!row) {
+            const defaultConfig = {
+              version: '1.2.0',
+              versionCode: 3,
+              minVersionCode: 1,
+              forceUpdate: false,
+              apkUrl: 'https://goldprojectbackend-production.up.railway.app/PrixOr.apk',
+              titleAr: 'تحديث جديد متوفر للتطبيق',
+              titleFr: 'Nouvelle mise à jour disponible',
+              messageAr: 'يتوفر إصدار جديد من تطبيق سعر الذهب. يرجى تحديث التطبيق للاستفادة من أحدث المميزات ودقة الأسعار المباشرة.',
+              messageFr: 'Une nouvelle version de PrixOr est disponible. Veuillez mettre à jour l\'application pour profiter des dernières améliorations.',
+              notesAr: '• تحسين سرعة واستقرار التطبيق\n• دقة الأسعار وتحديثات فورية في الوقت الفعلي\n• تحسين التوافق مع أجهزة أندرويد',
+              notesFr: '• Améliorations de performance et stabilité\n• Nouvelles fonctionnalités et prix en temps réel\n• Compatibilité optimisée Android & PWA',
+              updatedAt: new Date().toISOString()
+            };
+            db.run("INSERT INTO settings (key, value) VALUES ('app_version_config', ?)", [JSON.stringify(defaultConfig)]);
+          }
+        });
       }
     });
     // ─────────────────────────────────────────────────────────────────────────
@@ -490,6 +511,108 @@ async function sendPriceNotification(priceData) {
         console.error(`Erreur envoi FCM [${lang}]:`, fcmErr.message);
       }
     }
+  });
+}
+
+// ── Fonction utilitaire: Envoyer notification de mise à jour mobile (FCM) ────
+async function sendAppUpdateNotification(updateData) {
+  if (!firebaseMessaging) {
+    console.warn('⚠️ Firebase Messaging non disponible pour la mise à jour mobile.');
+    return { success: false, count: 0 };
+  }
+
+  return new Promise((resolve) => {
+    db.all('SELECT token, lang FROM fcm_tokens', async (err, rows) => {
+      if (err || !rows || rows.length === 0) {
+        return resolve({ success: true, count: 0 });
+      }
+
+      // Grouper les tokens par langue
+      const langGroups = rows.reduce((acc, row) => {
+        const l = row.lang || 'ar';
+        if (!acc[l]) acc[l] = [];
+        acc[l].push(row.token);
+        return acc;
+      }, {});
+
+      const version = updateData.version || '1.2.0';
+      const translations = {
+        ar: {
+          title: updateData.titleAr || `🥇 تحديث جديد متوفر للتطبيق (v${version})`,
+          body: updateData.messageAr || `يتوفر إصدار جديد من تطبيق سعر الذهب. انقر هنا للتحديث الآن.`
+        },
+        fr: {
+          title: updateData.titleFr || `🥇 Nouvelle version disponible (v${version})`,
+          body: updateData.messageFr || `Une nouvelle version de PrixOr est disponible. Cliquez ici pour mettre à jour.`
+        },
+        en: {
+          title: `🥇 New update available (v${version})`,
+          body: `A new version of PrixOr is available. Click here to update.`
+        },
+        es: {
+          title: `🥇 Nueva versión disponible (v${version})`,
+          body: `Una nueva versión de PrixOr está disponible. Haga clic para actualizar.`
+        }
+      };
+
+      let totalSuccess = 0;
+
+      for (const [lang, tokens] of Object.entries(langGroups)) {
+        const t = translations[lang] || translations['ar'];
+
+        const message = {
+          notification: {
+            title: t.title,
+            body: t.body,
+          },
+          data: {
+            type: 'app_update',
+            version: String(version),
+            versionCode: String(updateData.versionCode || '3'),
+            forceUpdate: String(updateData.forceUpdate ? 'true' : 'false'),
+            apkUrl: updateData.apkUrl || 'https://goldprojectbackend-production.up.railway.app/PrixOr.apk',
+            date: new Date().toISOString(),
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'gold_price_updates',
+              color: '#d4af37',
+              icon: 'ic_notification',
+              sound: 'default',
+            },
+          },
+          tokens: tokens,
+        };
+
+        try {
+          const response = await firebaseMessaging.sendEachForMulticast(message);
+          totalSuccess += response.successCount;
+          console.log(`📲 Notifications MàJ Mobile [${lang}] envoyées: ${response.successCount}/${tokens.length} succès`);
+
+          // Nettoyer les tokens invalides
+          if (response.failureCount > 0) {
+            const tokensToDelete = [];
+            response.responses.forEach((resp, idx) => {
+              if (!resp.success) {
+                const code = resp.error && resp.error.code;
+                if (code === 'messaging/invalid-registration-token' || code === 'messaging/registration-token-not-registered') {
+                  tokensToDelete.push(tokens[idx]);
+                }
+              }
+            });
+            if (tokensToDelete.length > 0) {
+              const placeholders = tokensToDelete.map(() => '?').join(',');
+              db.run(`DELETE FROM fcm_tokens WHERE token IN (${placeholders})`, tokensToDelete);
+            }
+          }
+        } catch (fcmErr) {
+          console.error(`Erreur envoi FCM MàJ Mobile [${lang}]:`, fcmErr.message);
+        }
+      }
+
+      resolve({ success: true, count: totalSuccess });
+    });
   });
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -834,6 +957,150 @@ app.post('/api/settings/footer', (req, res) => {
       io.emit('settingsUpdate', { key: 'footer_message', value: message });
       
       res.json({ success: true });
+    });
+  });
+});
+
+// ── API: Obtenir la version mobile courante (Public) ──────────────────────────
+app.get('/api/app-version', (req, res) => {
+  db.get("SELECT value FROM settings WHERE key = 'app_version_config'", (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    let config = {
+      version: '1.2.0',
+      versionCode: 3,
+      minVersionCode: 1,
+      forceUpdate: false,
+      apkUrl: 'https://goldprojectbackend-production.up.railway.app/PrixOr.apk',
+      titleAr: 'تحديث جديد متوفر للتطبيق',
+      titleFr: 'Nouvelle mise à jour disponible',
+      messageAr: 'يتوفر إصدار جديد من تطبيق سعر الذهب. يرجى تحديث التطبيق للاستفادة من أحدث المميزات ودقة الأسعار المباشرة.',
+      messageFr: 'Une nouvelle version de PrixOr est disponible. Veuillez mettre à jour l\'application pour profiter des dernières améliorations.',
+      notesAr: '• تحسين سرعة التطبيق واستقرار الإشعارات\n• دقة الأسعار وتحديثات فورية في الوقت الفعلي\n• تحسين التوافق مع أجهزة أندرويد',
+      notesFr: '• Améliorations de performance et stabilité\n• Nouvelles fonctionnalités et prix en temps réel\n• Compatibilité optimisée Android & PWA',
+      updatedAt: new Date().toISOString()
+    };
+
+    if (row && row.value) {
+      try {
+        const parsed = JSON.parse(row.value);
+        config = { ...config, ...parsed };
+      } catch (e) {
+        console.error('Erreur parsing app_version_config:', e.message);
+      }
+    }
+
+    res.json(config);
+  });
+});
+
+// ── API: Mettre à jour la version mobile & notifier les utilisateurs (Admin) ───
+app.post('/api/admin/app-version', (req, res) => {
+  const {
+    username,
+    password,
+    version,
+    versionCode,
+    minVersionCode,
+    forceUpdate,
+    apkUrl,
+    titleAr,
+    titleFr,
+    messageAr,
+    messageFr,
+    notesAr,
+    notesFr,
+    sendPushNotification = true,
+    broadcastSocket = true
+  } = req.body;
+
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], async (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(401).json({ error: 'Non autorisé' });
+
+    const config = {
+      version: (version || '1.2.0').trim(),
+      versionCode: parseInt(versionCode, 10) || 3,
+      minVersionCode: parseInt(minVersionCode, 10) || 1,
+      forceUpdate: !!forceUpdate,
+      apkUrl: apkUrl || 'https://goldprojectbackend-production.up.railway.app/PrixOr.apk',
+      titleAr: titleAr || 'تحديث جديد متوفر للتطبيق',
+      titleFr: titleFr || 'Nouvelle mise à jour disponible',
+      messageAr: messageAr || 'يتوفر إصدار جديد من تطبيق سعر الذهب. يرجى تحديث التطبيق الآن.',
+      messageFr: messageFr || 'Une nouvelle version de PrixOr est disponible. Veuillez mettre à jour l\'application.',
+      notesAr: notesAr || '',
+      notesFr: notesFr || '',
+      updatedAt: new Date().toISOString(),
+      updatedBy: user.username
+    };
+
+    const configJson = JSON.stringify(config);
+
+    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('app_version_config', ?)", [configJson], async function(saveErr) {
+      if (saveErr) return res.status(500).json({ error: saveErr.message });
+
+      console.log(`🚀 Version mobile mise à jour : v${config.version} (Code: ${config.versionCode}, Force: ${config.forceUpdate})`);
+
+      // Émission instantanée via Socket.IO à tous les clients connectés
+      if (broadcastSocket !== false) {
+        io.emit('app_update_available', config);
+        console.log('📡 Événement "app_update_available" diffusé à tous les clients Socket.IO');
+      }
+
+      let pushResult = { count: 0 };
+      if (sendPushNotification) {
+        pushResult = await sendAppUpdateNotification(config);
+      }
+
+      res.json({
+        success: true,
+        message: 'Configuration de version enregistrée avec succès',
+        config,
+        notifiedDevices: pushResult.count
+      });
+    });
+  });
+});
+
+// ── API: Renvoyer une notification de mise à jour mobile sans modifier la config ───
+app.post('/api/admin/app-version/notify', (req, res) => {
+  const { username, password } = req.body;
+
+  db.get('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1', [username, password], (err, user) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!user) return res.status(401).json({ error: 'Non autorisé' });
+
+    db.get("SELECT value FROM settings WHERE key = 'app_version_config'", async (sErr, row) => {
+      if (sErr) return res.status(500).json({ error: sErr.message });
+      
+      let config = {
+        version: '1.2.0',
+        versionCode: 3,
+        forceUpdate: false,
+        apkUrl: 'https://goldprojectbackend-production.up.railway.app/PrixOr.apk',
+        titleAr: 'تحديث جديد متوفر للتطبيق',
+        titleFr: 'Nouvelle mise à jour disponible',
+        messageAr: 'يتوفر إصدار جديد من تطبيق سعر الذهب. يرجى التحديث الآن.',
+        messageFr: 'Une nouvelle version de PrixOr est disponible. Veuillez mettre à jour.'
+      };
+
+      if (row && row.value) {
+        try {
+          config = JSON.parse(row.value);
+        } catch (e) {}
+      }
+
+      // Diffusion Socket.IO
+      io.emit('app_update_available', config);
+
+      // Envoi Push FCM
+      const pushResult = await sendAppUpdateNotification(config);
+
+      res.json({
+        success: true,
+        message: 'Notification de mise à jour diffusée avec succès',
+        notifiedDevices: pushResult.count
+      });
     });
   });
 });
